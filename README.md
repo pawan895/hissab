@@ -20,6 +20,10 @@ Kotlin · Jetpack Compose (Material 3) · Room · kotlinx.serialization · Andro
 
 Min SDK 26 (Android 8.0), target/compile SDK 35.
 
+## Download
+
+Grab the latest APK from the [Releases page](https://github.com/pawan895/hissab/releases/latest). It is signed with a debug key, so it is meant for personal sideloading.
+
 ## Getting started
 
 **Requirements:** JDK 21, Android SDK (set `sdk.dir` in `local.properties`), and a phone with USB debugging for `adb install`.
