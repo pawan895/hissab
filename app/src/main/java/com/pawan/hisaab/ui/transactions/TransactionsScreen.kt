@@ -32,6 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
+import com.pawan.hisaab.data.Bill
+import com.pawan.hisaab.data.Sharing
 import com.pawan.hisaab.data.db.Category
 import com.pawan.hisaab.data.db.CategoryGroup
 import com.pawan.hisaab.data.db.Direction
@@ -44,7 +46,7 @@ import com.pawan.hisaab.ui.theme.FinTheme
 import com.pawan.hisaab.ui.theme.Numbers
 import com.pawan.hisaab.util.Money
 
-enum class TxnFilter(val label: String) { All("All"), Uncategorized("To sort"), Spent("Spent"), Received("Received") }
+enum class TxnFilter(val label: String) { All("All"), Uncategorized("To sort"), Spent("Spent"), Received("Received"), Shared("Shared") }
 
 @Composable
 fun TransactionsScreen(
@@ -57,20 +59,22 @@ fun TransactionsScreen(
     onDelete: (Txn) -> Unit,
     onFileAll: (List<Txn>, Category) -> Unit,
     contentPadding: PaddingValues,
+    bills: Map<Long, Bill> = emptyMap(),
 ) {
     val c = FinTheme.colors
     var query by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(emptySet<String>()) }
     var filing by remember { mutableStateOf<TxnGroup?>(null) }
     val catById = remember(categories) { categories.associateBy { it.id } }
-    val shown = remember(txns, filter, query, catById) {
+    val shown = remember(txns, filter, query, catById, bills) {
         val q = query.trim().lowercase()
         txns.filter { t ->
             when (filter) {
                 TxnFilter.All -> true
-                TxnFilter.Uncategorized -> t.categoryId == null
+                TxnFilter.Uncategorized -> t.toSort
                 TxnFilter.Spent -> t.direction == Direction.DEBIT
                 TxnFilter.Received -> t.direction == Direction.CREDIT
+                TxnFilter.Shared -> t.paybackForId != null || t.sharePaise != null || t.id in bills
             } && (
                 q.isEmpty() || t.merchantRaw.lowercase().contains(q) || MerchantNormalizer.key(t.merchantRaw).contains(q) ||
                     t.note.lowercase().contains(q) || t.bank.lowercase().contains(q) ||
@@ -79,8 +83,9 @@ fun TransactionsScreen(
         }
     }
     val groups = remember(shown) { groupByMerchant(shown) }
-    val uncategorized = txns.count { it.categoryId == null }
-    val spent = shown.filter { it.direction == Direction.DEBIT }.sumOf { it.amountPaise }
+    val uncategorized = txns.count { it.toSort }
+    // What it cost you: shared bills count your share, not the whole bill.
+    val spent = shown.filter { it.direction == Direction.DEBIT }.sumOf { Sharing.cost(it, bills[it.id]?.received ?: 0L) }
 
     LazyColumn(contentPadding = contentPadding, modifier = Modifier.fillMaxSize()) {
         item {
@@ -122,6 +127,7 @@ fun TransactionsScreen(
             onDelete = onDelete,
             onFileAll = { filing = it },
             horizontalPadding = 24.dp,
+            bills = bills,
         )
         item { Spacer(Modifier.size(88.dp)) } // room above the add button
     }

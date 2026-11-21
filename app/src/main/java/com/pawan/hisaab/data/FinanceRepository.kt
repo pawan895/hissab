@@ -220,14 +220,18 @@ class FinanceRepository(
         timestamp: Long,
         source: TxnSource = TxnSource.MANUAL,
         method: String = "",
+        sharePaise: Long? = null,
+        paybackForId: Long? = null,
     ): Long {
         val key = MerchantNormalizer.key(merchant)
-        val category = categoryId ?: knownCategoryId(key, merchant, direction)
+        val category = if (paybackForId != null) null else categoryId ?: knownCategoryId(key, merchant, direction)
         val id = txnDao.insert(
             Txn(
                 amountPaise = amountPaise, direction = direction, timestamp = timestamp,
                 merchantRaw = merchant, merchantKey = key, categoryId = category,
                 note = note, source = source, bank = method,
+                sharePaise = sharePaise.takeIf { direction == Direction.DEBIT },
+                paybackForId = paybackForId.takeIf { direction == Direction.CREDIT },
             ),
         )
         if (categoryId != null) learn(key, direction, categoryId)
@@ -294,6 +298,25 @@ class FinanceRepository(
         val bill = txnDao.byId(billId) ?: return
         if (bill.direction != Direction.DEBIT) return
         txnDao.update(bill.copy(sharePaise = sharePaise?.coerceIn(0, bill.amountPaise)))
+    }
+
+    /**
+     * Credits that might be friends paying back [bill]: money received from shortly
+     * before it up to a month after, smaller than the bill, not already linked or filed
+     * as salary-like income you picked on purpose.
+     */
+    suspend fun paybackCreditsFor(bill: Txn): List<Txn> {
+        val credits = txnDao.listBetween(bill.timestamp - HOUR_MS, bill.timestamp + 30 * DAY_MS)
+        return credits.filter { t ->
+            t.direction == Direction.CREDIT && t.source != TxnSource.IMPORT &&
+                t.amountPaise < bill.amountPaise && (t.paybackForId == null || t.paybackForId == bill.id)
+        }.sortedBy { it.timestamp }
+    }
+
+    /** Links exactly [creditIds] to [billId]: adds the new ones and unlinks any left out. */
+    suspend fun setPaybacks(billId: Long, creditIds: Set<Long>) = db.withTransaction {
+        txnDao.paybacksFor(billId).filter { it.id !in creditIds }.forEach { txnDao.update(it.copy(paybackForId = null)) }
+        creditIds.forEach { id -> linkPayback(id, billId) }
     }
 
     suspend fun bill(id: Long): Bill? = txnDao.byId(id)?.let { Bill(it, txnDao.paybacksFor(id)) }

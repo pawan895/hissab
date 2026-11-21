@@ -64,11 +64,13 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import com.pawan.hisaab.data.db.Category
 import com.pawan.hisaab.data.db.Txn
 import com.pawan.hisaab.data.label
 import com.pawan.hisaab.popup.CategoryNotification
 import com.pawan.hisaab.ui.MainViewModel
 import com.pawan.hisaab.ui.budget.BudgetScreen
+import com.pawan.hisaab.ui.category.CategoryScreen
 import com.pawan.hisaab.ui.components.Hairline
 import com.pawan.hisaab.ui.components.Pill
 import com.pawan.hisaab.ui.dashboard.DashboardScreen
@@ -77,6 +79,7 @@ import com.pawan.hisaab.ui.onboarding.OnboardingScreen
 import com.pawan.hisaab.ui.settings.CSV_MIME_TYPES
 import com.pawan.hisaab.ui.settings.CategoriesScreen
 import com.pawan.hisaab.ui.settings.SettingsScreen
+import com.pawan.hisaab.ui.shared.SharedBillsScreen
 import com.pawan.hisaab.ui.theme.FinTheme
 import com.pawan.hisaab.ui.theme.HisaabTheme
 import com.pawan.hisaab.ui.transactions.TransactionsScreen
@@ -124,7 +127,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 /** Full-screen pages that sit above the tabs. */
-private enum class Page { None, Settings, Categories }
+private enum class Page { None, Settings, Categories, Shared, Category }
 
 @Composable
 private fun Root(vm: MainViewModel) {
@@ -142,6 +145,10 @@ private fun Root(vm: MainViewModel) {
     val lockEnabled by vm.lock.enabled.collectAsState()
     val locked by vm.lock.locked.collectAsState()
     val biometricOn by vm.lock.biometric.collectAsState()
+    val history by vm.history.collectAsState()
+    val bills by vm.bills.collectAsState()
+    val billsById = remember(bills) { bills.associateBy { it.txn.id } }
+    val owed = remember(bills) { bills.filter { it.outstanding > 0 } }
     val activity = LocalContext.current as FragmentActivity
 
     var tab by remember { mutableStateOf(Tab.Home) }
@@ -149,6 +156,8 @@ private fun Root(vm: MainViewModel) {
     var filter by remember { mutableStateOf(TxnFilter.All) }
     var editing by remember { mutableStateOf<Txn?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var detail by remember { mutableStateOf<Category?>(null) }
+    val goBack = { page = if (page == Page.Categories) Page.Settings else Page.None }
 
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -186,7 +195,7 @@ private fun Root(vm: MainViewModel) {
         }
     }
 
-    BackHandler(enabled = page != Page.None) { page = if (page == Page.Categories) Page.Settings else Page.None }
+    BackHandler(enabled = page != Page.None) { goBack() }
 
     val snackbarHost: @Composable () -> Unit = {
         SnackbarHost(snackbar) { data ->
@@ -223,7 +232,14 @@ private fun Root(vm: MainViewModel) {
                     month = month,
                     tab = tab,
                     busy = busy,
-                    onBack = { page = if (page == Page.Categories) Page.Settings else Page.None },
+                    title = when (page) {
+                        Page.Settings -> "Settings"
+                        Page.Categories -> "Categories"
+                        Page.Shared -> "Shared bills"
+                        Page.Category -> detail?.name ?: ""
+                        Page.None -> ""
+                    },
+                    onBack = goBack,
                     onPrev = vm::previousMonth,
                     onNext = vm::nextMonth,
                     onSettings = { page = Page.Settings },
@@ -248,15 +264,33 @@ private fun Root(vm: MainViewModel) {
             when {
                 page == Page.Categories -> CategoriesScreen(vm, groups, categories, pad)
                 page == Page.Settings -> SettingsScreen(vm, onManageCategories = { page = Page.Categories }, contentPadding = pad)
+                page == Page.Shared -> SharedBillsScreen(bills, onOpen = { editing = it }, onSettle = vm::settle, contentPadding = pad)
                 r == null -> Box(Modifier.padding(pad).fillMaxSize())
-                tab == Tab.Home -> DashboardScreen(
+                page == Page.Category && detail != null -> CategoryScreen(
+                    category = detail!!,
                     report = r,
+                    history = history,
                     txns = txns,
                     categories = categories,
+                    bills = billsById,
+                    onOpen = { editing = it },
+                    onMonth = { vm.month.value = it },
+                    contentPadding = pad,
+                )
+                tab == Tab.Home -> DashboardScreen(
+                    report = r,
+                    history = history,
+                    txns = txns,
+                    categories = categories,
+                    bills = billsById,
+                    owed = owed,
                     uncategorizedTotal = uncategorized,
                     onCategorizeClick = { filter = TxnFilter.Uncategorized; tab = Tab.Activity },
                     onSeeAll = { filter = TxnFilter.All; tab = Tab.Activity },
                     onBudget = { tab = Tab.Budget },
+                    onCategory = { detail = it; page = Page.Category },
+                    onShared = { page = Page.Shared },
+                    onMonth = { vm.month.value = it },
                     onOpen = { editing = it },
                     onScanInbox = { vm.scanInbox(3) },
                     contentPadding = pad,
@@ -271,6 +305,7 @@ private fun Root(vm: MainViewModel) {
                     onDelete = deleteWithUndo,
                     onFileAll = vm::categorizeAll,
                     contentPadding = pad,
+                    bills = billsById,
                 )
                 else -> BudgetScreen(
                     report = r,
@@ -325,6 +360,7 @@ private fun Root(vm: MainViewModel) {
 @Composable
 private fun Header(
     page: Page,
+    title: String,
     month: YearMonth,
     tab: Tab,
     busy: Boolean,
@@ -341,7 +377,14 @@ private fun Header(
         ) {
             if (page != Page.None) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                Text(if (page == Page.Settings) "Settings" else "Categories", style = MaterialTheme.typography.headlineSmall)
+                Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                if (page == Page.Category) {
+                    Text(
+                        "  " + month.month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = c.ink3,
+                    )
+                }
             } else {
                 Spacer(Modifier.width(12.dp))
                 Text(month.month.getDisplayName(TextStyle.FULL, Locale.ENGLISH), style = MaterialTheme.typography.headlineMedium)

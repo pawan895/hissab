@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.pawan.hisaab.MainActivity
 import com.pawan.hisaab.R
 import com.pawan.hisaab.container
+import com.pawan.hisaab.data.Bill
 import com.pawan.hisaab.data.db.Category
 import com.pawan.hisaab.data.db.Direction
 import com.pawan.hisaab.data.db.Txn
@@ -24,6 +25,7 @@ object CategoryNotification {
     private const val CHANNEL = "txn_category"
     const val EXTRA_TXN_ID = "txn_id"
     const val EXTRA_CATEGORY_ID = "category_id"
+    const val EXTRA_BILL_ID = "bill_id"
 
     fun createChannel(context: Context) {
         val channel = NotificationChannel(CHANNEL, "Categorize payments", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -33,7 +35,7 @@ object CategoryNotification {
     }
 
     @SuppressLint("MissingPermission") // guarded by areNotificationsEnabled()
-    fun post(context: Context, txn: Txn, suggestions: List<Category>, autoCategory: Category?) {
+    fun post(context: Context, txn: Txn, suggestions: List<Category>, autoCategory: Category?, payback: Bill? = null) {
         val nm = NotificationManagerCompat.from(context)
         if (!nm.areNotificationsEnabled()) return
         val verb = if (txn.direction == Direction.DEBIT) "paid to" else "received from"
@@ -58,7 +60,17 @@ object CategoryNotification {
             .setAutoCancel(true)
 
         if (autoCategory == null) {
-            suggestions.take(3).forEachIndexed { i, c ->
+            if (payback != null) {
+                val pi = PendingIntent.getBroadcast(
+                    context, (txn.id * 10 + 9).toInt(),
+                    Intent(context, NotificationActionReceiver::class.java)
+                        .putExtra(EXTRA_TXN_ID, txn.id)
+                        .putExtra(EXTRA_BILL_ID, payback.txn.id),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+                builder.addAction(0, "↩ Paid back: ${MerchantNormalizer.displayName(payback.txn.merchantRaw)}", pi)
+            }
+            suggestions.take(if (payback != null) 2 else 3).forEachIndexed { i, c ->
                 val pi = PendingIntent.getBroadcast(
                     context, (txn.id * 10 + i).toInt(),
                     Intent(context, NotificationActionReceiver::class.java)
@@ -79,12 +91,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val txnId = intent.getLongExtra(CategoryNotification.EXTRA_TXN_ID, -1)
         val categoryId = intent.getLongExtra(CategoryNotification.EXTRA_CATEGORY_ID, -1)
-        if (txnId < 0 || categoryId < 0) return
+        val billId = intent.getLongExtra(CategoryNotification.EXTRA_BILL_ID, -1)
+        if (txnId < 0 || (categoryId < 0 && billId < 0)) return
         val pending = goAsync()
         val c = context.applicationContext.container
         c.appScope.launch {
             try {
-                c.repo.categorize(txnId, categoryId)
+                if (billId >= 0) c.repo.linkPayback(txnId, billId) else c.repo.categorize(txnId, categoryId)
                 CategoryNotification.cancel(context, txnId)
             } finally {
                 pending.finish()

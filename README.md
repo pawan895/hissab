@@ -8,8 +8,10 @@
 
 - **Automatic payment capture.** Parses debit and credit SMS from HDFC, KVB and Federal Bank with exact rules. Other banks go through a cautious generic fallback, and those entries are flagged "verify".
 - **One-tap categorisation.** A popup appears over whatever you are doing. If the overlay permission is off, a notification with category buttons is used instead.
-- **Learns your habits.** Pick the same category for a merchant three times and future payments to it are filed automatically.
-- **Monthly budget.** Projected vs. actual vs. difference per category and group, with dashboard charts and a transaction list.
+- **Learns your habits.** Well-known merchants (Zomato, Zepto, Uber, …) are filed automatically, and so is any merchant you have categorised once.
+- **Shared bills.** Split a bill between friends from the popup or the payment itself. When a friend sends their share, link it to the bill: it lowers what the bill cost you instead of counting as income. Home shows what friends still owe you.
+- **Insights.** Spending by category (donut, tap for details), running total against last month and your budget, day-by-day bars, the last six months, and a page for each category with its trend and merchants.
+- **Monthly budget.** Projected vs. actual vs. difference per category and group, with a transaction list grouped by merchant.
 - **Google Sheet import / export.** Round-trips the "Monthly Budget" CSV layout.
 - **App lock.** PIN with optional fingerprint/face unlock, auto-lock after 30 seconds in the background.
 - **Safe by design.** OTPs, promos, collect requests and bill reminders are rejected. Duplicate SMS are skipped.
@@ -57,6 +59,7 @@ Hisaab asks for a PIN when it opens and again after 30 seconds in the background
 | `sms/InboxBackfill.kt` | Recover SMS missed while a battery manager blocked the app. Runs on every app open and de-duplicates by a hash of the SMS body plus UPI reference |
 | `popup/` | Overlay card and notification fallback for categorising a payment |
 | `data/` | Room database, repository, month reports, and `SheetIo.kt` for CSV import/export |
+| `data/Ledger.kt` | The money rules every report shares: sign rules per category kind, and how paybacks lower a shared bill's cost |
 | `ui/` | Compose screens: dashboard, budget, transactions, settings, lock, onboarding |
 | `security/AppLock.kt` | PIN and biometric lock |
 

@@ -130,12 +130,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun save(txn: Txn) = viewModelScope.launch { repo.updateTxn(txn) }
 
     /** [method] is how it was paid ("UPI", "Card", "Cash", …); cash entries never wait for an SMS. */
-    fun addManual(amountPaise: Long, direction: Direction, merchant: String, categoryId: Long?, note: String, timestamp: Long, method: String) =
-        viewModelScope.launch {
-            val source = if (method == "Cash") TxnSource.CASH else TxnSource.MANUAL
-            repo.addManual(amountPaise, direction, merchant, categoryId, note, timestamp, source, method)
-            say("Added")
-        }
+    fun addManual(
+        amountPaise: Long,
+        direction: Direction,
+        merchant: String,
+        categoryId: Long?,
+        note: String,
+        timestamp: Long,
+        method: String,
+        sharePaise: Long? = null,
+        paybackForId: Long? = null,
+    ) = viewModelScope.launch {
+        val source = if (method == "Cash") TxnSource.CASH else TxnSource.MANUAL
+        repo.addManual(amountPaise, direction, merchant, categoryId, note, timestamp, source, method, sharePaise, paybackForId)
+        say("Added")
+    }
 
     fun categorizeAll(txns: List<Txn>, category: Category) = viewModelScope.launch {
         repo.categorizeMany(txns.map { it.id }, category.id)
@@ -174,6 +183,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun settle(bill: Bill) = viewModelScope.launch {
         repo.setShare(bill.txn.id, bill.txn.amountPaise - bill.received)
         say("Settled")
+    }
+
+    suspend fun paybackCreditsFor(bill: Txn): List<Txn> = repo.paybackCreditsFor(bill)
+
+    fun setPaybacks(bill: Txn, creditIds: Set<Long>) = viewModelScope.launch {
+        repo.setPaybacks(bill.id, creditIds)
+        if (creditIds.isNotEmpty()) say("${creditIds.size} payback${if (creditIds.size == 1) "" else "s"} linked")
     }
 
     suspend fun paybackCandidates(credit: Txn, wide: Boolean): List<Bill> =

@@ -16,7 +16,8 @@ object PopupLauncher {
         if (!shown) {
             val repo = context.container.repo
             val auto = if (result.autoCategorized) result.txn.categoryId?.let { repo.category(it) } else null
-            CategoryNotification.post(context, result.txn, repo.suggestions(result.txn, 3), auto)
+            val payback = if (auto == null) repo.paybackCandidates(result.txn, limit = 1).firstOrNull() else null
+            CategoryNotification.post(context, result.txn, repo.suggestions(result.txn, 3), auto, payback)
         }
     }
 }

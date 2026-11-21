@@ -55,7 +55,7 @@ private val LightFin = FinColors(
     credit = Color(0xFF15803D),
     over = Color(0xFFDC2626),
     series = listOf(Color(0xFF3B5BDB), Color(0xFFE67700), Color(0xFFAE3EC9), Color(0xFF0C8599), Color(0xFFD6336C)),
-    seriesOther = Color(0xFFCED4DA),
+    seriesOther = Color(0xFFADB5BD),
 )
 
 private val DarkFin = FinColors(
@@ -68,7 +68,7 @@ private val DarkFin = FinColors(
     credit = Color(0xFF4ADE80),
     over = Color(0xFFF87171),
     series = listOf(Color(0xFF7B93FF), Color(0xFFFFA94D), Color(0xFFDA77F2), Color(0xFF3BC9DB), Color(0xFFF783AC)),
-    seriesOther = Color(0xFF495057),
+    seriesOther = Color(0xFF5C636A),
 )
 
 private fun scheme(c: FinColors, dark: Boolean, bg: Color) = (if (dark) darkColorScheme() else lightColorScheme()).copy(

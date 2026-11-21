@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.pawan.hisaab.data.Bill
 import com.pawan.hisaab.data.db.Category
 import com.pawan.hisaab.data.db.Direction
 import com.pawan.hisaab.data.db.Txn
@@ -63,6 +64,25 @@ fun groupByMerchant(txns: List<Txn>): List<TxnGroup> {
 
 private fun title(t: Txn) = if (t.source == TxnSource.IMPORT) t.merchantRaw else MerchantNormalizer.displayName(t.merchantRaw)
 
+/** Needs a category from you: not sorted and not a payback (those belong to their bill). */
+val Txn.toSort: Boolean get() = categoryId == null && paybackForId == null
+
+/** "Paid back · Barbeque Nation" for a payback, or the bill's split for a shared bill. */
+fun sharingNote(t: Txn, bills: Map<Long, Bill>): String? {
+    t.paybackForId?.let { id ->
+        return "Paid back" + (bills[id]?.let { " · " + MerchantNormalizer.displayName(it.txn.merchantRaw) } ?: "")
+    }
+    val bill = bills[t.id] ?: return null
+    return when {
+        bill.outstanding > 0 -> "your share ${Money.format(bill.cost)} · ${Money.format(bill.outstanding)} due"
+        bill.txn.sharePaise != null -> "your share ${Money.format(bill.cost)}"
+        bill.received > 0 -> "cost you ${Money.format(bill.cost)}"
+        else -> null
+    }
+}
+
+private const val PAYBACK_EMOJI = "↩"
+
 /**
  * Emits list items for [groups]. Merchant groups show the total and expand on tap to
  * list each payment. [onDelete] enables swipe-to-delete; [onFileAll] adds a
@@ -77,20 +97,21 @@ fun LazyListScope.txnGroupItems(
     onDelete: ((Txn) -> Unit)?,
     onFileAll: ((TxnGroup) -> Unit)?,
     horizontalPadding: Dp,
+    bills: Map<Long, Bill> = emptyMap(),
 ) {
     groups.forEach { g ->
         if (!g.isGroup) {
             item(key = "t${g.latest.id}") {
                 val t = g.latest
-                Swipeable(onDelete?.let { { it(t) } }) { SingleRow(t, catById[t.categoryId], horizontalPadding) { onOpen(t) } }
+                Swipeable(onDelete?.let { { it(t) } }) { SingleRow(t, catById[t.categoryId], bills, horizontalPadding) { onOpen(t) } }
             }
             return@forEach
         }
         val open = g.key in expanded
-        item(key = "g${g.key}") { GroupRow(g, catById, open, horizontalPadding) { onToggle(g.key) } }
+        item(key = "g${g.key}") { GroupRow(g, catById, bills, open, horizontalPadding) { onToggle(g.key) } }
         if (open) {
             items(g.txns, key = { "c${it.id}" }) { t ->
-                Swipeable(onDelete?.let { { it(t) } }) { ChildRow(t, catById[t.categoryId], horizontalPadding) { onOpen(t) } }
+                Swipeable(onDelete?.let { { it(t) } }) { ChildRow(t, catById[t.categoryId], bills, horizontalPadding) { onOpen(t) } }
             }
             if (onFileAll != null) {
                 item(key = "a${g.key}") {
@@ -110,10 +131,12 @@ fun LazyListScope.txnGroupItems(
 }
 
 @Composable
-private fun SingleRow(t: Txn, category: Category?, hPad: Dp, onClick: () -> Unit) {
+private fun SingleRow(t: Txn, category: Category?, bills: Map<Long, Bill>, hPad: Dp, onClick: () -> Unit) {
     val c = FinTheme.colors
+    val sharing = sharingNote(t, bills)
     val subtitle = listOfNotNull(
-        category?.name ?: "Categorize",
+        if (t.paybackForId != null) null else category?.name ?: "Categorize",
+        sharing,
         t.note.ifBlank { null },
         when (t.source) {
             TxnSource.CASH -> "Cash"
@@ -124,10 +147,10 @@ private fun SingleRow(t: Txn, category: Category?, hPad: Dp, onClick: () -> Unit
     ).joinToString(" · ")
     Box(Modifier.background(MaterialTheme.colorScheme.background).padding(horizontal = hPad)) {
         ListRow(
-            emoji = category?.emoji ?: "?",
+            emoji = if (t.paybackForId != null) PAYBACK_EMOJI else category?.emoji ?: "?",
             title = title(t),
             subtitle = subtitle,
-            subtitleColor = if (category == null) c.accent else c.ink2,
+            subtitleColor = if (t.toSort) c.accent else c.ink2,
             onClick = onClick,
         ) {
             Column(horizontalAlignment = Alignment.End) {
@@ -139,23 +162,31 @@ private fun SingleRow(t: Txn, category: Category?, hPad: Dp, onClick: () -> Unit
 }
 
 @Composable
-private fun GroupRow(g: TxnGroup, catById: Map<Long, Category>, open: Boolean, hPad: Dp, onClick: () -> Unit) {
+private fun GroupRow(g: TxnGroup, catById: Map<Long, Category>, bills: Map<Long, Bill>, open: Boolean, hPad: Dp, onClick: () -> Unit) {
     val c = FinTheme.colors
     val cats = g.txns.mapNotNull { it.categoryId?.let(catById::get) }.distinctBy { it.id }
-    val unsorted = g.txns.count { it.categoryId == null }
+    val unsorted = g.txns.count { it.toSort }
+    val paybacks = g.txns.count { it.paybackForId != null }
+    val due = g.txns.sumOf { bills[it.id]?.outstanding ?: 0L }
     val categoryText = when {
-        cats.isEmpty() -> null
-        cats.size == 1 -> cats.first().name
+        cats.isEmpty() -> if (paybacks > 0) "paid back" else null
+        cats.size == 1 -> cats.first().name + if (paybacks > 0) " · paid back" else ""
         else -> "${cats.size} categories"
     }
     val credit = g.latest.direction == Direction.CREDIT
     Box(Modifier.background(MaterialTheme.colorScheme.background).padding(horizontal = hPad)) {
         ListRow(
-            emoji = if (cats.size == 1) cats.first().emoji else if (cats.isEmpty()) "?" else "•••",
+            emoji = when {
+                cats.size == 1 -> cats.first().emoji
+                cats.isEmpty() && paybacks > 0 -> PAYBACK_EMOJI
+                cats.isEmpty() -> "?"
+                else -> "•••"
+            },
             title = title(g.latest),
             subtitle = listOfNotNull(
                 "${g.txns.size} payments",
                 categoryText,
+                if (due > 0) "${Money.format(due)} due" else null,
                 if (unsorted > 0) "$unsorted to sort" else null,
             ).joinToString(" · "),
             subtitleColor = if (unsorted > 0) c.accent else c.ink2,
@@ -182,7 +213,7 @@ private fun GroupRow(g: TxnGroup, catById: Map<Long, Category>, open: Boolean, h
 }
 
 @Composable
-private fun ChildRow(t: Txn, category: Category?, hPad: Dp, onClick: () -> Unit) {
+private fun ChildRow(t: Txn, category: Category?, bills: Map<Long, Bill>, hPad: Dp, onClick: () -> Unit) {
     val c = FinTheme.colors
     Row(
         Modifier
@@ -195,9 +226,13 @@ private fun ChildRow(t: Txn, category: Category?, hPad: Dp, onClick: () -> Unit)
         Column(Modifier.weight(1f)) {
             Text(t.timestamp.formatDate("EEE d MMM, h:mm a"), style = MaterialTheme.typography.bodyMedium)
             Text(
-                listOfNotNull(category?.let { "${it.emoji} ${it.name}" } ?: "Categorize", t.note.ifBlank { null }).joinToString(" · "),
+                listOfNotNull(
+                    if (t.paybackForId != null) null else category?.let { "${it.emoji} ${it.name}" } ?: "Categorize",
+                    sharingNote(t, bills),
+                    t.note.ifBlank { null },
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
-                color = if (category == null) c.accent else c.ink2,
+                color = if (t.toSort) c.accent else c.ink2,
             )
         }
         Spacer(Modifier.width(12.dp))

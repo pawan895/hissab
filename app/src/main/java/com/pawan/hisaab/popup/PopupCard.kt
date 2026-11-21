@@ -46,7 +46,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pawan.hisaab.container
+import com.pawan.hisaab.data.Bill
 import com.pawan.hisaab.data.FinanceRepository
+import com.pawan.hisaab.data.Sharing
 import com.pawan.hisaab.data.db.Category
 import com.pawan.hisaab.data.db.CategoryGroup
 import com.pawan.hisaab.data.db.Direction
@@ -71,12 +73,14 @@ private data class PopupState(
     val learned: Category?,
     val auto: Category?,
     val groups: List<Pair<CategoryGroup, List<Category>>>,
+    /** For money received: bills it might be paying back. */
+    val bills: List<Bill> = emptyList(),
 )
 
 private sealed interface Mode {
     data object Ask : Mode
     data object Auto : Mode
-    data class Saved(val category: Category) : Mode
+    data class Saved(val text: String) : Mode
 }
 
 private suspend fun loadState(repo: FinanceRepository, request: PopupRequest): PopupState? {
@@ -88,6 +92,7 @@ private suspend fun loadState(repo: FinanceRepository, request: PopupRequest): P
         learned = repo.learnedCategoryFor(txn),
         auto = auto,
         groups = groupedForDirection(repo.allGroups(), repo.allCategories(), txn.direction),
+        bills = if (request.preview) emptyList() else repo.paybackCandidates(txn, limit = 3),
     )
 }
 
@@ -126,6 +131,8 @@ private fun PopupContent(
     var showAll by remember { mutableStateOf(false) }
     var noteOpen by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf("") }
+    var splitOpen by remember { mutableStateOf(false) }
+    var share by remember { mutableStateOf<Long?>(null) }
     var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val focus = remember { FocusRequester() }
 
@@ -134,8 +141,9 @@ private fun PopupContent(
         delay(
             when (mode) {
                 Mode.Ask -> 30_000L
-                Mode.Auto -> 6_000L
-                is Mode.Saved -> 1_200L
+                Mode.Auto -> 8_000L
+                // Leave time to tap "Split bill" after picking a category.
+                is Mode.Saved -> if (isDebit && share == null && !splitOpen) 4_000L else 1_500L
             },
         )
         onNeedKeyboard(false)
@@ -154,8 +162,26 @@ private fun PopupContent(
         scope.launch {
             if (!preview) withContext(Dispatchers.IO) { repo.categorize(txn.id, cat.id, note.trim().ifEmpty { null }) }
             onNeedKeyboard(false)
-            mode = Mode.Saved(cat)
+            mode = Mode.Saved("Saved to ${cat.emoji} ${cat.name}")
         }
+    }
+
+    fun payback(bill: Bill) {
+        lastTouch = System.currentTimeMillis()
+        scope.launch {
+            if (!preview) withContext(Dispatchers.IO) { repo.linkPayback(txn.id, bill.txn.id) }
+            val left = Sharing.outstanding(bill.txn, bill.received + txn.amountPaise)
+            val name = MerchantNormalizer.displayName(bill.txn.merchantRaw)
+            mode = Mode.Saved(if (left > 0) "Paid back for $name · ${Money.format(left)} still due" else "Paid back for $name")
+        }
+    }
+
+    fun split(people: Int) {
+        lastTouch = System.currentTimeMillis()
+        val mine = Sharing.equalShare(txn.amountPaise, people)
+        share = mine
+        splitOpen = false
+        if (!preview) scope.launch { withContext(Dispatchers.IO) { repo.setShare(txn.id, mine) } }
     }
 
     fun close() {
@@ -207,10 +233,47 @@ private fun PopupContent(
             }
 
             Spacer(Modifier.height(14.dp))
+            if (isDebit) {
+                val mine = share
+                if (mine != null) {
+                    DoneRow("Your share ${Money.format(mine)} · ${Money.format(txn.amountPaise - mine)} to come back", null) {}
+                    Spacer(Modifier.height(8.dp))
+                } else if (splitOpen) {
+                    Text("Split between", style = MaterialTheme.typography.labelMedium, color = c.ink2)
+                    Row(Modifier.padding(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (2..6).forEach { n -> Pill("$n", false, { split(n) }) }
+                    }
+                }
+            }
             when (val m = mode) {
-                is Mode.Saved -> DoneRow("Saved to ${m.category.emoji} ${m.category.name}", null) {}
-                Mode.Auto -> DoneRow("Filed under ${s.auto!!.emoji} ${s.auto.name}", "Change") { mode = Mode.Ask }
+                is Mode.Saved -> DoneRow(m.text, if (isDebit && share == null && !splitOpen) "Split bill" else null) {
+                    splitOpen = true; lastTouch = System.currentTimeMillis()
+                }
+                Mode.Auto -> {
+                    DoneRow("Filed under ${s.auto!!.emoji} ${s.auto.name}", "Change") { mode = Mode.Ask }
+                    if (isDebit && share == null && !splitOpen) {
+                        Row { Spacer(Modifier.weight(1f)); QuietAction("Split bill") { splitOpen = true } }
+                    }
+                }
                 Mode.Ask -> {
+                    if (!isDebit && s.bills.isNotEmpty() && !showAll) {
+                        Text("Paying you back for?", style = MaterialTheme.typography.labelMedium, color = c.ink2)
+                        FlowRow(
+                            Modifier.padding(top = 8.dp, bottom = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            s.bills.forEach { b ->
+                                val name = MerchantNormalizer.displayName(b.txn.merchantRaw)
+                                Pill(
+                                    "↩  $name " + if (b.outstanding > 0) "· ${Money.format(b.outstanding)} due" else Money.format(b.txn.amountPaise),
+                                    false,
+                                    { payback(b) },
+                                )
+                            }
+                        }
+                        Text("Or file it as", style = MaterialTheme.typography.labelMedium, color = c.ink2, modifier = Modifier.padding(bottom = 8.dp))
+                    }
                     if (!showAll) {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -244,6 +307,7 @@ private fun PopupContent(
                     Spacer(Modifier.height(14.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (!noteOpen) QuietAction("Add note") { noteOpen = true }
+                        if (isDebit && share == null && !splitOpen) QuietAction("Split bill") { splitOpen = true }
                         if (showAll) QuietAction("Back") { showAll = false }
                         Spacer(Modifier.weight(1f))
                         QuietAction("Skip", ::close)
