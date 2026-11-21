@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+/captures
+.kotlin/
+dist/
+
+# Personal budget export (real financial data) - keep local
+Monthly Budget*.csv

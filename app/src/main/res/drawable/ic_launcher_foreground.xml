@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hisaab: a torn-off receipt with the rupee sign (glyph from Inter, OFL). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41,28H67A5,5 0,0 1,72 33V80L67.5,84L63,80L58.5,84L54,80L49.5,84L45,80L40.5,84L36,80V33A5,5 0,0 1,41 28Z" />
+    <path
+        android:fillColor="#111111"
+        android:pathData="M61.52 44.4 60.74 47.27H46.46L47.24 44.4ZM54.28 61 46.81 52.04 46.79 49.57H50.51Q51.8 49.57 52.68 49.13Q53.56 48.68 54.01 47.88Q54.45 47.07 54.45 46Q54.45 44.4 53.52 43.42Q52.58 42.44 50.51 42.44H46.46L47.32 39H50.51Q53.21 39 55 39.83Q56.8 40.67 57.69 42.18Q58.57 43.68 58.57 45.73Q58.57 47.55 57.93 48.95Q57.29 50.35 55.91 51.26Q54.54 52.17 52.31 52.51L52.18 52.56L58.89 60.81V61ZM61.54 39 60.74 41.91 49.11 41.89 49.9 39Z" />
+    <path
+        android:fillAlpha="0.22"
+        android:fillColor="#111111"
+        android:pathData="M44,69.2H64A1.2,1.2 0,0 1,64 71.6H44A1.2,1.2 0,0 1,44 69.2Z" />
+</vector>
